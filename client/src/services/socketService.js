@@ -2,27 +2,67 @@ import { io } from 'socket.io-client';
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
-// Create socket connection
+// Configure reconnection parameters
+const INITIAL_RETRY_DELAY = 1000;
+const MAX_RETRY_DELAY = 30000;
+const MAX_RETRIES = 10;
+
+let retryCount = 0;
+let retryDelay = INITIAL_RETRY_DELAY;
+
+// Create socket connection with enhanced configuration
 const socket = io(SOCKET_URL, {
   autoConnect: true,
   reconnection: true,
-  reconnectionAttempts: 5,
-  reconnectionDelay: 1000,
+  reconnectionAttempts: MAX_RETRIES,
+  reconnectionDelay: retryDelay,
+  reconnectionDelayMax: MAX_RETRY_DELAY,
+  timeout: 20000, // Increase connection timeout
   transports: ['websocket', 'polling'],
   withCredentials: true
 });
 
-// Connection event handlers
+// Connection event handlers with exponential backoff
 socket.on('connect', () => {
   console.log('Socket connected:', socket.id);
+  // Reset retry parameters on successful connection
+  retryCount = 0;
+  retryDelay = INITIAL_RETRY_DELAY;
 });
 
 socket.on('disconnect', (reason) => {
   console.log('Socket disconnected:', reason);
+  
+  // Implement custom reconnection logic for certain disconnect reasons
+  if (reason === 'io server disconnect') {
+    // Server initiated disconnect, attempt reconnection
+    setTimeout(() => {
+      socket.connect();
+    }, retryDelay);
+  }
 });
 
 socket.on('connect_error', (error) => {
   console.error('Socket connection error:', error.message);
+  
+  // Implement exponential backoff
+  if (retryCount < MAX_RETRIES) {
+    retryCount++;
+    retryDelay = Math.min(retryDelay * 1.5, MAX_RETRY_DELAY);
+    
+    console.log(`Attempting reconnection ${retryCount}/${MAX_RETRIES} in ${retryDelay}ms`);
+    
+    setTimeout(() => {
+      socket.connect();
+    }, retryDelay);
+  } else {
+    console.error('Max reconnection attempts reached');
+  }
+});
+
+// Add error handler
+socket.on('error', (error) => {
+  console.error('Socket error:', error);
 });
 
 export default socket;
