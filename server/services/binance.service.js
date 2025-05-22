@@ -8,15 +8,21 @@ dotenv.config();
 // Initialize cache with 5 minute standard TTL
 const marketDataCache = new NodeCache({ stdTTL: 300 });
 
-// Initialize Binance client with timeout settings
+// Initialize Binance client with increased timeout settings
 const binanceClient = Binance({
   apiKey: process.env.BINANCE_API_KEY,
   apiSecret: process.env.BINANCE_API_SECRET,
   getTime: () => Date.now(),
-  timeout: 60000, // Increased timeout to 60 seconds
+  timeout: 120000, // Increased timeout to 120 seconds
   wsOptions: {
-    timeout: 60000,
-    handshakeTimeout: 60000
+    timeout: 120000, // Increased to 120 seconds
+    handshakeTimeout: 120000, // Increased to 120 seconds
+    clientConfig: {
+      maxReceivedFrameSize: 100 * 1024 * 1024, // 100MB
+      maxReceivedMessageSize: 100 * 1024 * 1024, // 100MB
+      keepalive: true,
+      keepaliveInterval: 30000 // 30 seconds
+    }
   }
 });
 
@@ -26,12 +32,13 @@ const initBinanceWebsockets = (io) => {
     // Store active websocket connections
     const activeConnections = {};
     
-    // Reconnection configuration
-    const INITIAL_RETRY_DELAY = 2000; // Increased initial delay
-    const MAX_RETRY_DELAY = 60000; // Increased max delay to 1 minute
-    const MAX_RETRIES = 15; // Increased max retries
+    // Enhanced reconnection configuration
+    const INITIAL_RETRY_DELAY = 5000; // Increased initial delay to 5 seconds
+    const MAX_RETRY_DELAY = 300000; // Increased max delay to 5 minutes
+    const MAX_RETRIES = 20; // Increased max retries
+    const CONNECTION_TIMEOUT = 60000; // 60 second connection timeout
     
-    // Function to create a ticker websocket with reconnection logic
+    // Function to create a ticker websocket with enhanced reconnection logic
     const createTickerSocket = (symbol) => {
       if (activeConnections[symbol]) {
         return activeConnections[symbol];
@@ -43,6 +50,7 @@ const initBinanceWebsockets = (io) => {
       let retryDelay = INITIAL_RETRY_DELAY;
       let reconnectTimeout;
       let isConnecting = false;
+      let connectionTimeout;
       
       const connectWebSocket = () => {
         if (isConnecting) {
@@ -53,9 +61,12 @@ const initBinanceWebsockets = (io) => {
         try {
           isConnecting = true;
           
-          // Clear any existing timeout
+          // Clear any existing timeouts
           if (reconnectTimeout) {
             clearTimeout(reconnectTimeout);
+          }
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout);
           }
           
           // Close existing connection if any
@@ -68,18 +79,30 @@ const initBinanceWebsockets = (io) => {
             }
           }
 
-          // Add connection timeout
-          const connectionTimeout = setTimeout(() => {
+          // Set connection timeout
+          connectionTimeout = setTimeout(() => {
             logger.warn(`Connection timeout for ${symbol}`);
             isConnecting = false;
+            if (activeConnections[symbol]) {
+              try {
+                activeConnections[symbol]();
+                delete activeConnections[symbol];
+              } catch (err) {
+                logger.warn(`Error closing timed out connection for ${symbol}: ${err.message}`);
+              }
+            }
             handleReconnection(symbol);
-          }, 30000); // 30 second timeout
+          }, CONNECTION_TIMEOUT);
           
           const clean = binanceClient.ws.ticker(symbol, ticker => {
-            clearTimeout(connectionTimeout);
+            // Clear connection timeout on successful data
+            if (connectionTimeout) {
+              clearTimeout(connectionTimeout);
+              connectionTimeout = null;
+            }
             isConnecting = false;
             
-            // Reset retry count on successful data
+            // Reset retry parameters on successful data
             retryCount = 0;
             retryDelay = INITIAL_RETRY_DELAY;
             
@@ -95,17 +118,31 @@ const initBinanceWebsockets = (io) => {
             });
           });
           
-          // Enhanced error handling
+          // Enhanced error handling with specific error types
           if (clean && clean.on) {
             clean.on('error', (err) => {
-              clearTimeout(connectionTimeout);
+              if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+                connectionTimeout = null;
+              }
               isConnecting = false;
-              logger.error(`WebSocket runtime error for ${symbol}: ${err.message}`);
-              handleReconnection(symbol);
+              logger.error(`WebSocket error for ${symbol}: ${err.message}`);
+              
+              // Handle specific error types
+              if (err.code === 'ECONNREFUSED' || err.code === 'ETIMEDOUT') {
+                logger.warn(`Connection failed for ${symbol}, attempting reconnect...`);
+                handleReconnection(symbol);
+              } else {
+                // For other errors, attempt immediate reconnection
+                setTimeout(() => handleReconnection(symbol), 1000);
+              }
             });
             
             clean.on('close', () => {
-              clearTimeout(connectionTimeout);
+              if (connectionTimeout) {
+                clearTimeout(connectionTimeout);
+                connectionTimeout = null;
+              }
               isConnecting = false;
               logger.warn(`WebSocket closed for ${symbol}`);
               handleReconnection(symbol);
@@ -115,6 +152,10 @@ const initBinanceWebsockets = (io) => {
           activeConnections[symbol] = clean;
           return clean;
         } catch (err) {
+          if (connectionTimeout) {
+            clearTimeout(connectionTimeout);
+            connectionTimeout = null;
+          }
           isConnecting = false;
           logger.error(`WebSocket connection error for ${symbol}: ${err.message}`);
           handleReconnection(symbol);
@@ -129,7 +170,7 @@ const initBinanceWebsockets = (io) => {
         }
         
         retryCount++;
-        retryDelay = Math.min(retryDelay * 2, MAX_RETRY_DELAY);
+        retryDelay = Math.min(retryDelay * 1.5, MAX_RETRY_DELAY);
         
         logger.info(`Attempting reconnection ${retryCount}/${MAX_RETRIES} for ${symbol} in ${retryDelay}ms`);
         
@@ -168,7 +209,7 @@ const initBinanceWebsockets = (io) => {
       });
     });
     
-    // Cleanup function for graceful shutdown
+    // Enhanced cleanup function for graceful shutdown
     const cleanup = () => {
       Object.entries(activeConnections).forEach(([symbol, connection]) => {
         try {

@@ -2,14 +2,17 @@ import { io } from 'socket.io-client';
 
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
-// Configure reconnection parameters
-const INITIAL_RETRY_DELAY = 1000;
-const MAX_RETRY_DELAY = 30000;
-const MAX_RETRIES = 10;
+// Enhanced reconnection parameters
+const INITIAL_RETRY_DELAY = 2000; // 2 seconds
+const MAX_RETRY_DELAY = 60000; // 1 minute
+const MAX_RETRIES = 15;
+const CONNECTION_TIMEOUT = 30000; // 30 seconds
 
 let retryCount = 0;
 let retryDelay = INITIAL_RETRY_DELAY;
 let reconnectTimeout;
+let connectionTimeout;
+let isConnecting = false;
 
 // Create socket connection with enhanced configuration
 const socket = io(SOCKET_URL, {
@@ -18,55 +21,94 @@ const socket = io(SOCKET_URL, {
   reconnectionAttempts: MAX_RETRIES,
   reconnectionDelay: retryDelay,
   reconnectionDelayMax: MAX_RETRY_DELAY,
-  timeout: 20000, // Increase connection timeout
+  timeout: CONNECTION_TIMEOUT,
   transports: ['websocket', 'polling'],
-  withCredentials: true
+  withCredentials: true,
+  extraHeaders: {
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache'
+  }
 });
 
-// Connection event handlers with exponential backoff
+// Enhanced connection event handlers
 socket.on('connect', () => {
   console.log('Socket connected:', socket.id);
-  // Reset retry parameters on successful connection
+  
+  // Reset connection parameters
   retryCount = 0;
   retryDelay = INITIAL_RETRY_DELAY;
+  isConnecting = false;
   
-  // Clear any existing reconnection timeout
+  // Clear timeouts
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
     reconnectTimeout = null;
+  }
+  if (connectionTimeout) {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = null;
   }
 });
 
 socket.on('disconnect', (reason) => {
   console.log('Socket disconnected:', reason);
+  isConnecting = false;
   
-  // Clear any existing reconnection timeout
+  // Clear timeouts
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+  if (connectionTimeout) {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = null;
   }
   
-  // Implement custom reconnection logic for certain disconnect reasons
-  if (reason === 'io server disconnect' || reason === 'transport close') {
+  // Handle specific disconnect reasons
+  if (reason === 'io server disconnect' || reason === 'transport close' || reason === 'ping timeout') {
     handleReconnection();
   }
 });
 
 socket.on('connect_error', (error) => {
   console.error('Socket connection error:', error.message);
+  isConnecting = false;
+  
+  if (connectionTimeout) {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = null;
+  }
+  
   handleReconnection();
 });
 
-// Add error handler
 socket.on('error', (error) => {
   console.error('Socket error:', error);
+  isConnecting = false;
+  
+  if (connectionTimeout) {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = null;
+  }
+  
   handleReconnection();
 });
 
-// Enhanced reconnection handler with exponential backoff
+// Enhanced reconnection handler
 const handleReconnection = () => {
-  // Clear any existing reconnection timeout
+  if (isConnecting) {
+    console.log('Connection attempt already in progress, skipping reconnection');
+    return;
+  }
+  
+  // Clear existing timeouts
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+  if (connectionTimeout) {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = null;
   }
   
   if (retryCount >= MAX_RETRIES) {
@@ -81,18 +123,35 @@ const handleReconnection = () => {
   
   reconnectTimeout = setTimeout(() => {
     try {
+      isConnecting = true;
+      
+      // Set connection timeout
+      connectionTimeout = setTimeout(() => {
+        console.warn('Connection attempt timed out');
+        isConnecting = false;
+        handleReconnection();
+      }, CONNECTION_TIMEOUT);
+      
       socket.connect();
     } catch (err) {
       console.error('Error during reconnection attempt:', err);
+      isConnecting = false;
       handleReconnection();
     }
   }, retryDelay);
 };
 
-// Cleanup function for component unmounting
+// Enhanced cleanup function
 const cleanup = () => {
+  isConnecting = false;
+  
   if (reconnectTimeout) {
     clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+  if (connectionTimeout) {
+    clearTimeout(connectionTimeout);
+    connectionTimeout = null;
   }
   if (socket.connected) {
     socket.disconnect();
