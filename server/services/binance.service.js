@@ -1,0 +1,242 @@
+const Binance = require('binance-api-node').default;
+const NodeCache = require('node-cache');
+const dotenv = require('dotenv');
+const logger = require('../utils/logger');
+
+dotenv.config();
+
+// Initialize cache with 5 minute standard TTL
+const marketDataCache = new NodeCache({ stdTTL: 300 });
+
+// Initialize Binance client
+const binanceClient = Binance({
+  apiKey: process.env.BINANCE_API_KEY,
+  apiSecret: process.env.BINANCE_API_SECRET,
+  getTime: () => Date.now()
+});
+
+// Initialize websocket connections for price updates
+const initBinanceWebsockets = (io) => {
+  try {
+    // Store active websocket connections
+    const activeConnections = {};
+    
+    // Function to create a ticker websocket
+    const createTickerSocket = (symbol) => {
+      if (activeConnections[symbol]) {
+        return activeConnections[symbol];
+      }
+      
+      logger.info(`Starting Binance websocket for ${symbol}`);
+      
+      let clean;
+      try {
+        clean = binanceClient.ws.ticker(symbol, ticker => {
+          io.to(symbol).emit('ticker', {
+            symbol: ticker.symbol,
+            price: ticker.curDayClose,
+            priceChange: ticker.priceChange,
+            priceChangePercent: ticker.priceChangePercent,
+            volume: ticker.volume,
+            high: ticker.high,
+            low: ticker.low,
+            timestamp: Date.now()
+          });
+        });
+      } catch (err) {
+        logger.error(`WebSocket error for ${symbol}: ${err.message}`);
+        // Optionally, you can implement a retry/backoff here
+        return null;
+      }
+      
+      // Add a listener for websocket errors if supported
+      if (clean && clean.on) {
+        clean.on('error', (err) => {
+          logger.error(`WebSocket runtime error for ${symbol}: ${err.message}`);
+        });
+        clean.on('close', () => {
+          logger.warn(`WebSocket closed for ${symbol}`);
+        });
+      }
+      
+      activeConnections[symbol] = clean;
+      return clean;
+    };
+    
+    // Create default connections for popular coins
+    const defaultSymbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'];
+    defaultSymbols.forEach(createTickerSocket);
+    
+    // Export a function to create new connections as needed
+    io.on('connection', (socket) => {
+      socket.on('subscribe', (symbol) => {
+        createTickerSocket(symbol);
+      });
+    });
+    
+    return activeConnections;
+  } catch (error) {
+    logger.error(`Binance websocket initialization error: ${error.message}`);
+    throw error;
+  }
+};
+
+// Get current price for a symbol
+const getCurrentPrice = async (symbol) => {
+  try {
+    // Check cache first
+    const cacheKey = `price_${symbol}`;
+    const cachedPrice = marketDataCache.get(cacheKey);
+    
+    if (cachedPrice) {
+      return cachedPrice;
+    }
+    
+    // If not in cache, fetch from API
+    const ticker = await binanceClient.prices({ symbol });
+    marketDataCache.set(cacheKey, parseFloat(ticker[symbol]), 60); // Cache for 1 minute
+    
+    return parseFloat(ticker[symbol]);
+  } catch (error) {
+    logger.error(`Error fetching price for ${symbol}: ${error.message}`);
+    throw error;
+  }
+};
+
+// Get klines (candlestick data)
+const getKlines = async (symbol, interval, limit = 100) => {
+  try {
+    // Check cache first
+    const cacheKey = `klines_${symbol}_${interval}_${limit}`;
+    const cachedData = marketDataCache.get(cacheKey);
+    
+    if (cachedData) {
+      return cachedData;
+    }
+    
+    // If not in cache, fetch from API
+    const klines = await binanceClient.candles({
+      symbol,
+      interval,
+      limit
+    });
+    
+    // Process data into a more usable format
+    const processedData = klines.map(candle => ({
+      time: candle.openTime,
+      open: parseFloat(candle.open),
+      high: parseFloat(candle.high),
+      low: parseFloat(candle.low),
+      close: parseFloat(candle.close),
+      volume: parseFloat(candle.volume)
+    }));
+    
+    // Cache the processed data (TTL depends on interval)
+    const ttl = interval.includes('m') ? 60 : 300; // 1 minute for minute candles, 5 minutes for others
+    marketDataCache.set(cacheKey, processedData, ttl);
+    
+    return processedData;
+  } catch (error) {
+    logger.error(`Error fetching klines for ${symbol}: ${error.message}`);
+    throw error;
+  }
+};
+
+// Get all available symbols
+const getSymbols = async () => {
+  try {
+    // Check cache first
+    const cacheKey = 'all_symbols';
+    const cachedSymbols = marketDataCache.get(cacheKey);
+    
+    if (cachedSymbols) {
+      return cachedSymbols;
+    }
+    
+    // If not in cache, fetch from API
+    const exchangeInfo = await binanceClient.exchangeInfo();
+    const symbols = exchangeInfo.symbols
+      .filter(s => s.status === 'TRADING' && s.quoteAsset === 'USDT')
+      .map(s => ({
+        symbol: s.symbol,
+        baseAsset: s.baseAsset,
+        quoteAsset: s.quoteAsset
+      }));
+    
+    // Cache for 1 hour (symbols don't change often)
+    marketDataCache.set(cacheKey, symbols, 3600);
+    
+    return symbols;
+  } catch (error) {
+    logger.error(`Error fetching symbols: ${error.message}`);
+    throw error;
+  }
+};
+
+// Execute a market buy order
+const executeBuyOrder = async (symbol, quoteAmount) => {
+  try {
+    logger.info(`Executing buy order for ${symbol}, amount: ${quoteAmount} USDT`);
+    
+    // For market orders, we need to calculate the quantity based on current price
+    const currentPrice = await getCurrentPrice(symbol);
+    const quantity = quoteAmount / currentPrice;
+    
+    // Execute the order
+    const order = await binanceClient.order({
+      symbol: symbol,
+      side: 'BUY',
+      type: 'MARKET',
+      quoteOrderQty: quoteAmount.toFixed(2) // USDT amount to spend
+    });
+    
+    logger.info(`Buy order executed: ${JSON.stringify(order)}`);
+    return order;
+  } catch (error) {
+    logger.error(`Error executing buy order for ${symbol}: ${error.message}`);
+    throw error;
+  }
+};
+
+// Execute a market sell order
+const executeSellOrder = async (symbol, quantity) => {
+  try {
+    logger.info(`Executing sell order for ${symbol}, quantity: ${quantity}`);
+    
+    // Execute the order
+    const order = await binanceClient.order({
+      symbol: symbol,
+      side: 'SELL',
+      type: 'MARKET',
+      quantity: quantity.toFixed(6) // Asset quantity to sell
+    });
+    
+    logger.info(`Sell order executed: ${JSON.stringify(order)}`);
+    return order;
+  } catch (error) {
+    logger.error(`Error executing sell order for ${symbol}: ${error.message}`);
+    throw error;
+  }
+};
+
+// Get account information and balances
+const getAccountInfo = async () => {
+  try {
+    const accountInfo = await binanceClient.accountInfo();
+    return accountInfo;
+  } catch (error) {
+    logger.error(`Error fetching account info: ${error.message}`);
+    throw error;
+  }
+};
+
+module.exports = {
+  binanceClient,
+  initBinanceWebsockets,
+  getCurrentPrice,
+  getKlines,
+  getSymbols,
+  executeBuyOrder,
+  executeSellOrder,
+  getAccountInfo
+};

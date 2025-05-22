@@ -1,0 +1,189 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --primary-color: #3b82f6;  /* Blue 500 */
+  --secondary-color: #0ea5e9; /* Sky 500 */
+  --accent-color: #6366f1;  /* Indigo 500 */
+  --success-color: #22c55e;  /* Green 500 */
+  --warning-color: #f59e0b;  /* Amber 500 */
+  --error-color: #ef4444;  /* Red 500 */
+}
+
+body {
+  @apply font-sans text-base antialiased;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s ease;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-gray-700 rounded-lg;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-500 rounded-lg;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-gray-400;
+}
+
+/* Loading animations */
+.loading-spinner {
+  @apply inline-block h-6 w-6 animate-spin rounded-full border-4 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite];
+}
+
+/* Dashboard card */
+.dashboard-card {
+  @apply bg-gray-800 rounded-xl p-5 shadow-lg border border-gray-700 transition-all duration-300;
+}
+
+.dashboard-card:hover {
+  @apply border-blue-500/40 shadow-blue-500/10;
+}
+
+/* Signal badges */
+.signal-buy {
+  @apply bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium;
+}
+
+.signal-sell {
+  @apply bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium;
+}
+
+.signal-hold {
+  @apply bg-amber-500 text-white px-3 py-1 rounded-full text-sm font-medium;
+}
+
+/* Button styles */
+.btn-primary {
+  @apply bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center;
+}
+
+.btn-secondary {
+  @apply bg-gray-700 hover:bg-gray-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center;
+}
+
+.btn-success {
+  @apply bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center;
+}
+
+.btn-danger {
+  @apply bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center;
+}
+
+.btn-outline {
+  @apply border border-gray-600 hover:border-blue-500 text-gray-300 hover:text-blue-500 font-semibold py-2 px-4 rounded-lg transition-colors duration-200 flex items-center justify-center;
+}
+
+/* Form elements */
+.form-input {
+  @apply bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition duration-200;
+}
+
+.form-label {
+  @apply block text-sm font-medium text-gray-300 mb-1;
+}
+
+/* Tables */
+.table-container {
+  @apply overflow-x-auto rounded-lg border border-gray-700;
+}
+
+.data-table {
+  @apply min-w-full divide-y divide-gray-700;
+}
+
+.data-table thead {
+  @apply bg-gray-800;
+}
+
+.data-table th {
+  @apply px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider;
+}
+
+.data-table tbody {
+  @apply bg-gray-800 divide-y divide-gray-700;
+}
+
+.data-table td {
+  @apply px-6 py-4 whitespace-nowrap text-sm text-gray-300;
+}
+
+/* Charts */
+.chart-container {
+  @apply bg-gray-800 rounded-xl p-3 border border-gray-700;
+  height: 100%;
+  min-height: 300px;
+}
+
+/* Switch - for toggle buttons */
+.switch {
+  @apply relative inline-flex flex-shrink-0 h-6 w-11 border-2 border-transparent rounded-full cursor-pointer transition-colors ease-in-out duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500;
+}
+
+.switch-enabled {
+  @apply bg-blue-600;
+}
+
+.switch-disabled {
+  @apply bg-gray-600;
+}
+
+.switch-knob {
+  @apply pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transform ring-0 transition ease-in-out duration-200;
+}
+
+.switch-knob-enabled {
+  @apply translate-x-5;
+}
+
+.switch-knob-disabled {
+  @apply translate-x-0;
+}
+
+/* Animations */
+@keyframes pulse-blue {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-blue {
+  animation: pulse-blue 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Page transitions */
+.page-transition-enter {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.page-transition-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 300ms, transform 300ms;
+}
+
+.page-transition-exit {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.page-transition-exit-active {
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity 300ms, transform 300ms;
+}
