@@ -7,7 +7,9 @@ const socket = io(SOCKET_URL, {
   autoConnect: true,
   reconnection: true,
   reconnectionAttempts: 5,
-  reconnectionDelay: 1000
+  reconnectionDelay: 1000,
+  transports: ['websocket', 'polling'],
+  withCredentials: true
 });
 
 // Connection event handlers
@@ -20,7 +22,7 @@ socket.on('disconnect', (reason) => {
 });
 
 socket.on('connect_error', (error) => {
-  console.error('Socket connection error:', error);
+  console.error('Socket connection error:', error.message);
 });
 
 export default socket;
