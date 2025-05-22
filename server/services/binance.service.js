@@ -21,7 +21,7 @@ const initBinanceWebsockets = (io) => {
     // Store active websocket connections
     const activeConnections = {};
     
-    // Function to create a ticker websocket
+    // Function to create a ticker websocket with reconnection logic
     const createTickerSocket = (symbol) => {
       if (activeConnections[symbol]) {
         return activeConnections[symbol];
@@ -29,48 +29,77 @@ const initBinanceWebsockets = (io) => {
       
       logger.info(`Starting Binance websocket for ${symbol}`);
       
-      let clean;
-      try {
-        clean = binanceClient.ws.ticker(symbol, ticker => {
-          io.to(symbol).emit('ticker', {
-            symbol: ticker.symbol,
-            price: ticker.curDayClose,
-            priceChange: ticker.priceChange,
-            priceChangePercent: ticker.priceChangePercent,
-            volume: ticker.volume,
-            high: ticker.high,
-            low: ticker.low,
-            timestamp: Date.now()
+      const connectWebSocket = () => {
+        try {
+          // Close existing connection if any
+          if (activeConnections[symbol]) {
+            activeConnections[symbol]();
+            delete activeConnections[symbol];
+          }
+          
+          const clean = binanceClient.ws.ticker(symbol, ticker => {
+            io.to(symbol).emit('ticker', {
+              symbol: ticker.symbol,
+              price: ticker.curDayClose,
+              priceChange: ticker.priceChange,
+              priceChangePercent: ticker.priceChangePercent,
+              volume: ticker.volume,
+              high: ticker.high,
+              low: ticker.low,
+              timestamp: Date.now()
+            });
           });
-        });
-      } catch (err) {
-        logger.error(`WebSocket error for ${symbol}: ${err.message}`);
-        // Optionally, you can implement a retry/backoff here
-        return null;
-      }
+          
+          // Enhanced error handling
+          if (clean && clean.on) {
+            clean.on('error', (err) => {
+              logger.error(`WebSocket runtime error for ${symbol}: ${err.message}`);
+              // Attempt reconnection after error
+              setTimeout(() => {
+                logger.info(`Attempting to reconnect WebSocket for ${symbol}`);
+                connectWebSocket();
+              }, 5000);
+            });
+            
+            clean.on('close', () => {
+              logger.warn(`WebSocket closed for ${symbol}`);
+              // Attempt reconnection after close
+              setTimeout(() => {
+                logger.info(`Attempting to reconnect WebSocket for ${symbol}`);
+                connectWebSocket();
+              }, 5000);
+            });
+          }
+          
+          activeConnections[symbol] = clean;
+          return clean;
+        } catch (err) {
+          logger.error(`WebSocket connection error for ${symbol}: ${err.message}`);
+          // Attempt reconnection after error
+          setTimeout(() => {
+            logger.info(`Attempting to reconnect WebSocket for ${symbol}`);
+            connectWebSocket();
+          }, 5000);
+          return null;
+        }
+      };
       
-      // Add a listener for websocket errors if supported
-      if (clean && clean.on) {
-        clean.on('error', (err) => {
-          logger.error(`WebSocket runtime error for ${symbol}: ${err.message}`);
-        });
-        clean.on('close', () => {
-          logger.warn(`WebSocket closed for ${symbol}`);
-        });
-      }
-      
-      activeConnections[symbol] = clean;
-      return clean;
+      return connectWebSocket();
     };
     
     // Create default connections for popular coins
     const defaultSymbols = ['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'ADAUSDT', 'SOLUSDT'];
     defaultSymbols.forEach(createTickerSocket);
     
-    // Export a function to create new connections as needed
+    // Handle socket.io connections
     io.on('connection', (socket) => {
       socket.on('subscribe', (symbol) => {
         createTickerSocket(symbol);
+        socket.join(symbol);
+      });
+      
+      socket.on('unsubscribe', (symbol) => {
+        socket.leave(symbol);
       });
     });
     
