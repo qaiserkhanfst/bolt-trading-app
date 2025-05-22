@@ -21,6 +21,11 @@ const initBinanceWebsockets = (io) => {
     // Store active websocket connections
     const activeConnections = {};
     
+    // Reconnection configuration
+    const INITIAL_RETRY_DELAY = 1000;
+    const MAX_RETRY_DELAY = 30000;
+    const MAX_RETRIES = 10;
+    
     // Function to create a ticker websocket with reconnection logic
     const createTickerSocket = (symbol) => {
       if (activeConnections[symbol]) {
@@ -29,15 +34,32 @@ const initBinanceWebsockets = (io) => {
       
       logger.info(`Starting Binance websocket for ${symbol}`);
       
+      let retryCount = 0;
+      let retryDelay = INITIAL_RETRY_DELAY;
+      let reconnectTimeout;
+      
       const connectWebSocket = () => {
         try {
+          // Clear any existing timeout
+          if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+          }
+          
           // Close existing connection if any
           if (activeConnections[symbol]) {
-            activeConnections[symbol]();
+            try {
+              activeConnections[symbol]();
+            } catch (err) {
+              logger.warn(`Error closing existing connection for ${symbol}: ${err.message}`);
+            }
             delete activeConnections[symbol];
           }
           
           const clean = binanceClient.ws.ticker(symbol, ticker => {
+            // Reset retry count on successful data
+            retryCount = 0;
+            retryDelay = INITIAL_RETRY_DELAY;
+            
             io.to(symbol).emit('ticker', {
               symbol: ticker.symbol,
               price: ticker.curDayClose,
@@ -54,20 +76,12 @@ const initBinanceWebsockets = (io) => {
           if (clean && clean.on) {
             clean.on('error', (err) => {
               logger.error(`WebSocket runtime error for ${symbol}: ${err.message}`);
-              // Attempt reconnection after error
-              setTimeout(() => {
-                logger.info(`Attempting to reconnect WebSocket for ${symbol}`);
-                connectWebSocket();
-              }, 5000);
+              handleReconnection(symbol);
             });
             
             clean.on('close', () => {
               logger.warn(`WebSocket closed for ${symbol}`);
-              // Attempt reconnection after close
-              setTimeout(() => {
-                logger.info(`Attempting to reconnect WebSocket for ${symbol}`);
-                connectWebSocket();
-              }, 5000);
+              handleReconnection(symbol);
             });
           }
           
@@ -75,13 +89,30 @@ const initBinanceWebsockets = (io) => {
           return clean;
         } catch (err) {
           logger.error(`WebSocket connection error for ${symbol}: ${err.message}`);
-          // Attempt reconnection after error
-          setTimeout(() => {
-            logger.info(`Attempting to reconnect WebSocket for ${symbol}`);
-            connectWebSocket();
-          }, 5000);
+          handleReconnection(symbol);
           return null;
         }
+      };
+      
+      const handleReconnection = (symbol) => {
+        if (retryCount >= MAX_RETRIES) {
+          logger.error(`Max reconnection attempts reached for ${symbol}`);
+          return;
+        }
+        
+        retryCount++;
+        retryDelay = Math.min(retryDelay * 1.5, MAX_RETRY_DELAY);
+        
+        logger.info(`Attempting reconnection ${retryCount}/${MAX_RETRIES} for ${symbol} in ${retryDelay}ms`);
+        
+        // Clear any existing timeout
+        if (reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+        }
+        
+        reconnectTimeout = setTimeout(() => {
+          connectWebSocket();
+        }, retryDelay);
       };
       
       return connectWebSocket();
@@ -101,7 +132,29 @@ const initBinanceWebsockets = (io) => {
       socket.on('unsubscribe', (symbol) => {
         socket.leave(symbol);
       });
+      
+      socket.on('disconnect', () => {
+        logger.info(`Client disconnected: ${socket.id}`);
+      });
     });
+    
+    // Cleanup function for graceful shutdown
+    const cleanup = () => {
+      Object.entries(activeConnections).forEach(([symbol, connection]) => {
+        try {
+          if (connection) {
+            connection();
+            logger.info(`Closed connection for ${symbol}`);
+          }
+        } catch (err) {
+          logger.error(`Error closing connection for ${symbol}: ${err.message}`);
+        }
+      });
+    };
+    
+    // Handle process termination
+    process.on('SIGTERM', cleanup);
+    process.on('SIGINT', cleanup);
     
     return activeConnections;
   } catch (error) {
