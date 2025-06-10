@@ -1,7 +1,6 @@
 const express = require('express');
 const { analyzeCoin } = require('../services/analysis.service');
 const { calculateTradeParameters } = require('../services/risk.service');
-const { verifyFirebaseToken } = require('../middleware/auth.middleware');
 const logger = require('../utils/logger');
 
 const router = express.Router();

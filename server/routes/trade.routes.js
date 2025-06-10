@@ -1,6 +1,7 @@
 const express = require('express');
 const { executeTrade, getUserTrades, closeTrade } = require('../services/trade.service');
 const logger = require('../utils/logger');
+const { calculateTradeParameters } = require('../services/risk.service');
 
 const router = express.Router();
 
@@ -12,9 +13,9 @@ router.post('/execute', authMiddleware.verifyFirebaseToken, async (req, res) => 
   try {
     const userId = req.user.uid;
     const tradeParams = req.body;
-    
+
     const result = await executeTrade(userId, tradeParams);
-    
+
     res.status(200).json({ success: true, data: result });
   } catch (error) {
     logger.error(`Error executing trade: ${error.message}`);
@@ -22,6 +23,22 @@ router.post('/execute', authMiddleware.verifyFirebaseToken, async (req, res) => 
   }
 });
 
+// Calculate trade parameters from provided analysis
+router.post('/calculate-parameters', authMiddleware.verifyFirebaseToken, async (req, res) => {
+  try {
+    const { symbol, analysis } = req.body;
+
+    if (!symbol || !analysis) {
+      return res.status(400).json({ success: false, message: 'Symbol and analysis required' });
+    }
+
+    const params = await calculateTradeParameters(symbol, analysis);
+    res.status(200).json({ success: true, data: params });
+  } catch (error) {
+    logger.error(`Error calculating trade parameters: ${error.message}`);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+});
 // Get user's trades
 router.get('/user-trades', authMiddleware.verifyFirebaseToken, async (req, res) => {
   try {
