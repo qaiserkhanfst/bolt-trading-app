@@ -55,7 +55,7 @@ const getNewsSentiment = async (symbol) => {
 
     // Use CryptoPanic API (free tier)
     const response = await axios.get(
-      `https://cryptopanic.com/api/v1/posts/?auth_token=YOUR_TOKEN_HERE&currencies=${baseAsset}&public=true`
+        `https://cryptopanic.com/api/v1/posts/?auth_token=${process.env.CRYPTO_PANIC_TOKEN}&currencies=${baseAsset}&public=true`
     );
 
     if (!response.data || !response.data.results) {
